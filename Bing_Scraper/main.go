@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -10,6 +12,35 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 )
+
+func searchHandler(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	pagesStr := r.URL.Query().Get("pages")
+
+	if query == "" {
+		http.Error(w, "missing query parameter: q", http.StatusBadRequest)
+		return
+	}
+
+	pages := 1 // default
+	if pagesStr != "" {
+		fmt.Sscanf(pagesStr, "%d", &pages)
+		if pages <= 0 {
+			pages = 1
+		}
+	}
+
+	results, err := bingScrape(query, nil, pages, 30, 2)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+
 
 type searchResults struct {
 	ResultRank  int
@@ -132,14 +163,10 @@ func scrapeClientRequests(searchURL string, proxyString interface{}) (*http.Resp
 }
 
 func main() {
+	http.HandleFunc("/search", searchHandler)
 
-	text := "Akshat Kumar"
-	res, err := bingScrape(text, nil, 1, 30, 10)
-	fmt.Println("Results count:", len(res))
+	fmt.Println("Server running on http://localhost:8080")
+	fmt.Println("Try: http://localhost:8080/search?q=golang&pages=2")
 
-	if err == nil {
-		for _, res := range res {
-			fmt.Println(res)
-		}
-	}
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
