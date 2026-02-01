@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
-	"net/url"
+
+	"github.com/PuerkitoBio/goquery"
 )
 
 var googleDomains = map[string]string{
@@ -217,7 +219,11 @@ type searchResults struct {
 	ResultDesc  string
 }
 
-var userAgents = []string{}
+var userAgents = []string{
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+}
 
 func randomUserAgent() string {
 	return userAgents[rand.Intn(len(userAgents))]
@@ -226,7 +232,8 @@ func randomUserAgent() string {
 func buildGoogleURLs(searchTerm string, languageCode string, countryCode string, pages int, count int) ([]string, error) {
 	toScrape := []string{}
 	searchTerm = strings.Trim(searchTerm, " ")
-	searchTerm = strings.Replace(searchTerm, " ", "+", -1)
+	searchTerm = url.QueryEscape(strings.TrimSpace(searchTerm))
+
 	if googleBase, found := googleDomains[countryCode]; found {
 		for i := 0; i < pages; i++ {
 			start := i * count
@@ -240,7 +247,40 @@ func buildGoogleURLs(searchTerm string, languageCode string, countryCode string,
 	return toScrape, nil
 }
 
-func googleScrape(searchTerm, languageCode string, countryCode string, proxyString interface{}, pages, count, backoff int) ([]searchResults, error) {
+func googleResultParsing(response *http.Response, rank int) ([]searchResults, error) {
+	defer response.Body.Close()
+
+	doc, err := goquery.NewDocumentFromReader(response.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	results := []searchResults{}
+	rank++
+
+	sel := doc.Find("div.g")
+	for i := range sel.Nodes {
+		item := sel.Eq(i)
+		link, _ := item.Find("a").Attr("href")
+		title := item.Find("h3").Text()
+
+		if link != "" && !strings.HasPrefix(link, "/") {
+			results = append(results, searchResults{
+				ResultRank:  rank,
+				ResultURL:   link,
+				ResultTitle: title,
+			})
+			rank++
+		}
+	}
+	html, _ := doc.Html()
+	fmt.Println(html[:500])
+
+
+	return results, nil
+}
+
+func googleScrape(searchTerm, languageCode string, countryCode string, proxyString interface{}, pages int, count int, backoff int) ([]searchResults, error) {
 	results := []searchResults{}
 	resultCounter := 0
 	googlePages, err := buildGoogleURLs(searchTerm, languageCode, countryCode, pages, count)
@@ -285,21 +325,24 @@ func scrapeClientRequests(searchURL string, proxyString interface{}) (*http.Resp
 	req.Header.Set("User-Agent", randomUserAgent())
 
 	res, err := baseClient.Do(req)
-	if res.StatusCode != 200 {
-		err := fmt.Errorf("Scraper recived a non 200 stauts code, suggesting a ban.")
-		return nil, err
-	}
-
 	if err != nil {
 		return nil, err
 	}
+
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("non-200 status: %d", res.StatusCode)
+	}
+
 	return res, nil
 }
 
 func main() {
+
 	text := "Akshat Kumar"
 	cc := "com"
 	res, err := googleScrape(text, "en", cc, nil, 1, 30, 10)
+	fmt.Println("Results count:", len(res))
+
 
 	if err == nil {
 		for _, res := range res {
